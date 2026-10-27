@@ -2,8 +2,22 @@
 
 **Record yourself doing a task once, then turn it into a skill your AI agent can repeat.**
 
+> [!NOTE]
+> **This is an AWS-migrated fork of [microsoft/skill-recorder](https://github.com/microsoft/skill-recorder).**
+> It isn't maintained or endorsed by Microsoft. What's different from upstream:
+>
+> - Analysis and skill building run on **Claude in Amazon Bedrock** through a small
+>   service your organization deploys from [`proxy/`](proxy/README.md). Users sign in
+>   with an access token; the AWS credentials stay in the service.
+> - Voice narration is transcribed on your organization's **SageMaker endpoint**
+>   instead of on-device.
+> - **GitHub Copilot** is still available as an option in **AI settings**.
+>
+> The release linked below is upstream's and doesn't include these changes. To run
+> this fork, build it from source (see [Develop from source](#develop-from-source)).
+
 > [!TIP]
-> **Want to install Skill Recorder? [Go to the latest release](https://github.com/microsoft/skill-recorder/releases/latest).**
+> **Want to install upstream Skill Recorder? [Go to the latest release](https://github.com/microsoft/skill-recorder/releases/latest).**
 > Scroll to **Commit-pinned installation** and copy the complete command for your
 > operating system. It is ready to paste: you do not need to edit it or download
 > the source code yourself. [Step-by-step instructions below](#install-it).
