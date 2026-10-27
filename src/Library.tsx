@@ -12,7 +12,7 @@ import type {
   SkillPlacement,
   SkillPreview,
 } from "../common/ipc";
-import { isCopilotSignedOutError } from "../common/ipc";
+import { isAiSettingsError, isCopilotSignedOutError } from "../common/ipc";
 import type {
   BuildTarget,
   BuiltSkill,
@@ -44,6 +44,14 @@ import { SkillReviewModal } from "./SkillReviewModal";
 import { initialSkillReviewState, SkillOperationGuard, skillReviewBusy, skillReviewReducer } from "./skill-review-state";
 import { SensitiveReview } from "./SensitiveReview";
 import { AnalysisRecovery, completeSignIn, type AnalysisRun } from "./analysis-recovery";
+import { AiSettingsSheet } from "./AiSettings";
+import {
+  aiBackendName,
+  aiDestination,
+  OpenAiSettingsContext,
+  useActiveAiProvider,
+  useOpenAiSettings,
+} from "./ai-backend";
 
 export function Library() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -51,6 +59,8 @@ export function Library() {
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [narrationStatus, setNarrationStatus] = useState<NarrationStatus | null>(null);
+  const [showAiSettings, setShowAiSettings] = useState(false);
+  const openAiSettings = useCallback(() => setShowAiSettings(true), []);
 
   const loadSessions = useCallback(async () => {
     const list = await window.skillRecorder.listSessions();
@@ -96,43 +106,49 @@ export function Library() {
   const selected = sessions.find((s) => s.id === selectedId) ?? null;
 
   return (
-    <div className="lib">
-      <aside className="lib-list">
-        <div className="lib-list-head">
-          <span className="eyebrow">Sessions</span>
-          <span className="pill">{sessions.length}</span>
-        </div>
-        {notice && (
-          <button className="sess-notice" onClick={() => setNotice(null)} title="Dismiss">
-            {notice}
-          </button>
-        )}
-        <div className="lib-list-scroll">
-          <SessionsList
-            sessions={sessions}
-            loaded={loaded}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onDelete={deleteSession}
-          />
-        </div>
-      </aside>
-      <main className="lib-detail">
-        {selected ? (
-          <AnalysisWorkspace
-            key={selected.id}
-            summary={selected}
-            narrationStatus={narrationStatus}
-            onChanged={loadSessions}
-          />
-        ) : (
-          <div className="detail-empty">
-            <span className="eyebrow">No session selected</span>
-            <p>Pick a recording on the left to review its reconstructed intent and steps.</p>
+    <OpenAiSettingsContext.Provider value={openAiSettings}>
+      <div className="lib">
+        <aside className="lib-list">
+          <div className="lib-list-head">
+            <span className="eyebrow">Sessions</span>
+            <span className="pill">{sessions.length}</span>
+            <button className="ghost lib-ai-settings" onClick={openAiSettings} title="Choose where analysis runs">
+              AI settings
+            </button>
           </div>
-        )}
-      </main>
-    </div>
+          {notice && (
+            <button className="sess-notice" onClick={() => setNotice(null)} title="Dismiss">
+              {notice}
+            </button>
+          )}
+          <div className="lib-list-scroll">
+            <SessionsList
+              sessions={sessions}
+              loaded={loaded}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onDelete={deleteSession}
+            />
+          </div>
+        </aside>
+        <main className="lib-detail">
+          {selected ? (
+            <AnalysisWorkspace
+              key={selected.id}
+              summary={selected}
+              narrationStatus={narrationStatus}
+              onChanged={loadSessions}
+            />
+          ) : (
+            <div className="detail-empty">
+              <span className="eyebrow">No session selected</span>
+              <p>Pick a recording on the left to review its reconstructed intent and steps.</p>
+            </div>
+          )}
+        </main>
+        {showAiSettings && <AiSettingsSheet onClose={() => setShowAiSettings(false)} />}
+      </div>
+    </OpenAiSettingsContext.Provider>
   );
 }
 
@@ -415,7 +431,7 @@ function DebugDownload({ sessionId }: { sessionId: string }) {
 }
 
 /**
- * Error banner for the Copilot-backed panels. When the CLI has no credentials the app
+ * Error banner for the AI-backed panels. An AWS setup error offers the AI settings. When the CLI has no credentials the app
  * waits for verified authentication. Only analysis supplies a recovery callback;
  * building, creating and installing always require another explicit user action.
  */
@@ -438,6 +454,7 @@ function AnalysisError({
   const live = useRef(false);
   const endCallback = useRef(onSignInEnd);
   endCallback.current = onSignInEnd;
+  const openAiSettings = useOpenAiSettings();
 
   useEffect(() => {
     live.current = true;
@@ -509,6 +526,18 @@ function AnalysisError({
     }
   };
 
+  if (isAiSettingsError(error)) {
+    return (
+      <div className="analysis-error">
+        <p>{error}</p>
+        {openAiSettings && (
+          <div className="signin-row">
+            <button className="row-action" onClick={openAiSettings}>Open AI settings</button>
+          </div>
+        )}
+      </div>
+    );
+  }
   if (!isCopilotSignedOutError(error)) return <div className="analysis-error">{error}</div>;
 
   return (
@@ -556,6 +585,7 @@ function AnalysisWorkspace({
   onChanged: () => void | Promise<void>;
 }) {
   const sessionId = summary.id;
+  const aiProvider = useActiveAiProvider();
   const voicePending = summary.hasAudio && !summary.hasNarration;
   const voiceLanguage = narrationLanguageLabel(
     summary.narrationLanguage ?? DEFAULT_NARRATION_LANGUAGE,
@@ -899,11 +929,12 @@ function AnalysisWorkspace({
               Analyze recording
             </button>
             <details className="analyze-disclosure">
-              <summary>What gets sent to GitHub Copilot</summary>
+              <summary>What gets sent to {aiBackendName(aiProvider)}</summary>
               <p>
                 When you choose Analyze, the event timeline (window and document titles, URLs, and
                 clipboard previews), plus screen images, narration text, and other content you
-                provide, are sent to GitHub&apos;s cloud service for processing by GitHub Copilot.{" "}
+                provide, are sent to {aiDestination(aiProvider)}.{" "}
+                {aiProvider === "aws" && "Screen images the model looks at are kept there briefly. "}
                 <span className="cloud-analysis-caution">
                   Do not analyze a recording that may contain passwords, access tokens, API keys,
                   credentials, secrets, or other sensitive or confidential information.
@@ -912,11 +943,15 @@ function AnalysisWorkspace({
                 passwords, keys, emails, and card or ID numbers from the text and your screen
                 images. You can turn this off in What&apos;s recorded for more accurate analysis. It
                 can miss things, so it is a safety net, not a guarantee.
+                {aiProvider === "aws" &&
+                  " Recorded voice is sent as audio to be transcribed, so anything you say can't be hidden."}
               </p>
             </details>
             {voicePending && (
               <p className="voice-analysis-note">
-                {narrationStatus?.model === "ready"
+                {narrationStatus?.engine === "aws"
+                  ? `Your ${voiceLanguage} voice is sent to your organization's service on AWS to be transcribed in the same language, then analyzed.`
+                  : narrationStatus?.model === "ready"
                   ? `Your ${voiceLanguage} voice is transcribed in the same language first, then analyzed.`
                   : `Your ${voiceLanguage} voice is transcribed in the same language first, then analyzed. The first run downloads a ${NARRATION_MODEL_DOWNLOAD_LABEL} voice model once.`}
               </p>

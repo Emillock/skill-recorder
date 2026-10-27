@@ -2,8 +2,22 @@
 
 **Record yourself doing a task once, then turn it into a skill your AI agent can repeat.**
 
+> [!NOTE]
+> **This is an AWS-migrated fork of [microsoft/skill-recorder](https://github.com/microsoft/skill-recorder).**
+> It isn't maintained or endorsed by Microsoft. What's different from upstream:
+>
+> - Analysis and skill building run on **Claude in Amazon Bedrock** through a small
+>   service your organization deploys from [`proxy/`](proxy/README.md). Users sign in
+>   with an access token; the AWS credentials stay in the service.
+> - Voice narration is transcribed on your organization's **SageMaker endpoint**
+>   instead of on-device.
+> - **GitHub Copilot** is still available as an option in **AI settings**.
+>
+> The release linked below is upstream's and doesn't include these changes. To run
+> this fork, build it from source (see [Develop from source](#develop-from-source)).
+
 > [!TIP]
-> **Want to install Skill Recorder? [Go to the latest release](https://github.com/microsoft/skill-recorder/releases/latest).**
+> **Want to install upstream Skill Recorder? [Go to the latest release](https://github.com/microsoft/skill-recorder/releases/latest).**
 > Scroll to **Commit-pinned installation** and copy the complete command for your
 > operating system. It is ready to paste: you do not need to edit it or download
 > the source code yourself. [Step-by-step instructions below](#install-it).
@@ -11,8 +25,9 @@
 Skill Recorder captures a real work session on your screen: the clicks, the app and
 window switches, the pages you visit, commands/output from its optional recorded terminal,
 and (if you want) your spoken narration. It then uses
-the **GitHub Copilot CLI** to reconstruct *what you actually did* as a clear **intent plus
-an ordered list of steps**. From there, one step turns that single run into something an
+**Claude, through your organization's Skill Recorder service on AWS** (or the **GitHub
+Copilot CLI**, if you choose it) to reconstruct *what you actually did* as a clear
+**intent plus an ordered list of steps**. From there, one step turns that single run into something an
 agent can reuse:
 
 - a **Skill**: a `SKILL.md` procedure an agent runs on demand, or
@@ -35,8 +50,8 @@ form can teach the agent to submit *all* of them.
 2. 🎛️ **Control.** While recording, a small always-on-top bar shows capture,
    microphone, and recorded-terminal state. Open the session-scoped terminal, mute,
    unmute, or switch mics, then finish or discard with confirmation.
-3. 🧠 **Analyze.** Click Analyze and GitHub Copilot reconstructs one overall intent and
-   an ordered list of steps. Review and edit until it reads right.
+3. 🧠 **Analyze.** Click Analyze and the AI backend (Claude on AWS by default) reconstructs
+   one overall intent and an ordered list of steps. Review and edit until it reads right.
 4. ✨ **Create.** From an approved analysis, generate a reusable **Skill** and/or a
    scheduled **Automation**.
 
@@ -51,8 +66,10 @@ Review provides visibility into the generated instructions, not a security guara
 
 Skill Recorder is published as a **source release**: one command downloads a pinned Node.js
 runtime, builds the exact release commit on your machine, and adds a **Skill Recorder (Source)**
-app you can relaunch anytime. Nothing is installed globally. You'll need a GitHub account with
-**Copilot access**; the Copilot CLI ships with the app.
+app you can relaunch anytime. Nothing is installed globally. To analyze recordings you'll need
+the **service URL and an access token** for your organization's Skill Recorder service on AWS
+(your administrator deploys it from [`proxy/`](proxy/README.md)), or a GitHub account with
+**Copilot access** if you choose the GitHub Copilot backend; the Copilot CLI ships with the app.
 
 macOS is the primary target. Windows 11 (x64 and ARM64) is supported too (see
 [`WINDOWS-VALIDATION.md`](WINDOWS-VALIDATION.md)).
@@ -94,8 +111,15 @@ Advanced options, including running in the background on macOS or Ubuntu, are in
 
 1. **Grant Screen Recording.** On first launch, macOS asks for Screen Recording permission;
    grant it and you're ready to record.
-2. **Record, Analyze, Create.** Do your task, then Analyze. The first time you Analyze,
-   Skill Recorder offers **Sign in to Copilot** if you aren't signed in yet. Finish
+2. **Set up AI.** Open **AI settings** (in the Sessions window, or **settings** next to the
+   AI row in the recorder). Choose **Claude on AWS**, enter the service URL and your access
+   token, and click **Test connection**. Or choose **GitHub Copilot** (see below).
+3. **Record, Analyze, Create.** Do your task, then Analyze.
+
+### Using GitHub Copilot instead
+
+With the GitHub Copilot backend selected, the first time you Analyze,
+Skill Recorder offers **Sign in to Copilot** if you aren't signed in yet. Finish
    authorization in your browser; the app verifies sign-in and automatically retries
    the interrupted analysis once. There is no login terminal window to close.
    Canceling sign-in or leaving that analysis prevents the automatic retry.
@@ -132,7 +156,8 @@ To inspect the script before running it, set install options, update, or uninsta
 
 > ⚠️ **Keep secrets out of your recordings.** Don't record, type, paste, or narrate
 > passwords, tokens, API keys, or other confidential info. Choosing *Analyze* sends
-> recording data to GitHub's cloud. Skill Recorder reminds you before every recording.
+> recording data to the AI backend you chose: your organization's AWS account by default,
+> or GitHub's cloud. Skill Recorder reminds you before every recording.
 > Details in [What gets captured](#what-gets-captured).
 
 ---
@@ -141,13 +166,18 @@ To inspect the script before running it, set install options, update, or uninsta
 
 ## What gets captured
 
-Recording, storage, frame extraction, and optional narration transcription all happen
-**on your computer**; nothing leaves while you record. Only when you choose **Analyze**
-does Skill Recorder send the event timeline (window/document titles, URLs, clipboard
-previews, and terminal commands), extracted screen images, narration text, and bounded
-terminal-output excerpts requested during analysis to GitHub's cloud for Copilot to process.
+Recording, storage, and frame extraction happen **on your computer** (and so does
+narration transcription with the GitHub Copilot backend); nothing leaves while you record.
+Only when you choose **Analyze** does Skill Recorder send the event timeline
+(window/document titles, URLs, clipboard previews, and terminal commands), extracted
+screen images, narration text, and bounded terminal-output excerpts requested during
+analysis to the AI backend: your organization's Skill Recorder service on AWS (Claude in
+Amazon Bedrock), or GitHub's cloud for Copilot to process. With the AWS backend, screen
+images the model looks at are stored in the service's S3 bucket for a day by default, and
+recorded voice is sent as audio to be transcribed, so spoken details can't be redacted.
 When protection is enabled, terminal commands and the complete local terminal transcript
-participate in the same on-device secret/PII scan before any requested excerpt is returned.
+participate in the same on-device secret/PII scan before any requested excerpt is
+returned.
 
 The in-app "Records your screen and activity" panel spells out exactly what's collected:
 
@@ -156,8 +186,10 @@ The in-app "Records your screen and activity" panel spells out exactly what's co
 - **Screen video:** recorded by Chromium; low-rate snapshots are kept only when the
   screen changes or a heartbeat is due.
 - **Clipboard:** short previews of copied text that tie steps together.
-- **Narration** *(optional)*: spoken commentary, transcribed **on-device** in any of
-  Whisper's 99 supported languages (a one-time ~252 MB model download on first use).
+- **Narration** *(optional)*: spoken commentary in any of Whisper's 99 supported
+  languages. With the AWS backend it's transcribed on your organization's SageMaker
+  endpoint when you analyze; with GitHub Copilot it's transcribed **on-device** (a one-time
+  ~252 MB model download on first use).
 - **Recorded terminal** *(only when opened from the floating recording bar)*: command,
   cwd, shell, exit status, duration, and the complete terminal output. The transcript
   has no app-imposed size cap and counts toward the saved session's storage. It captures
@@ -189,7 +221,7 @@ assets, or releases must follow [`RELEASING.md`](RELEASING.md).
 
 ## Evals
 
-The Copilot **describer** and **builders** have a fixture-based eval suite; see
+The **describer** and **builders** have a fixture-based eval suite; see
 [`evals/README.md`](evals/README.md).
 
 ```bash
@@ -202,6 +234,8 @@ npm run eval:builder    # score the skill/automation generalization
 
 - **[INSTALL.md](INSTALL.md):** install options, inspect-first install, updating,
   uninstalling, and manual developer setup.
+- **[proxy/README.md](proxy/README.md):** deploying the Skill Recorder service on AWS
+  (Bedrock, SageMaker speech-to-text, access tokens).
 - **[RELEASING.md](RELEASING.md):** maintainer release runbook.
 - **[evals/README.md](evals/README.md):** the describer / builder eval harness.
 - **[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md):** licenses for bundled dependencies.

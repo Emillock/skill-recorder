@@ -12,6 +12,10 @@ import os from "node:os";
 import path from "node:path";
 
 import type {
+  AiConnectionResult,
+  AiSettingsInput,
+  AiSettingsResult,
+  AiSettingsStatus,
   AnalysisEditInput,
   AnalysisFeedbackInput,
   AnalyzeResult,
@@ -37,6 +41,9 @@ import { AutomationBuilder, loadPersistedAutomation } from "./automationbuilder/
 import { cancelCopilotSignIn, disposeCopilotSignIn, openCopilotSignIn } from "./copilot-signin";
 import { buildDebugInfo, writeDebugBundle } from "./debug-bundle";
 import { Describer, loadPersistedAnalysis } from "./describer/describer";
+import { normalizeProxyUrl, resolveAiConfig } from "./llm/config";
+import { testAwsConnection } from "./llm/connection-test";
+import type { AiSettingsStore } from "./llm/settings-store";
 import type { RedactionContext } from "./describer/tools";
 import { runDoctor } from "./doctor";
 import { createLogger } from "./logger";
@@ -67,6 +74,8 @@ export function registerIpc(
   microphones: AudioRecorder,
   screens: ScreenSourceService,
   sensitiveModels: SensitiveModelManager,
+  aiSettings: AiSettingsStore,
+  emitAiSettings: (status: AiSettingsStatus) => void,
   isRecordingStartPending: () => boolean,
   canForceTerminalFinish: (sender: WebContents) => boolean,
 ): void {
@@ -183,6 +192,36 @@ export function registerIpc(
     if (typeof attemptId !== "string") throw new Error("Invalid sign-in attempt.");
     cancelCopilotSignIn(attemptId, event.sender.id);
   });
+  ipcMain.handle(IPC.aiSettings, () => aiSettings.status());
+  ipcMain.handle(IPC.saveAiSettings, async (_event, input: AiSettingsInput): Promise<AiSettingsResult> => {
+    if (describer.isBusy() || builder.isBusy() || automationBuilder.isBusy()) {
+      return {
+        ok: false,
+        status: aiSettings.status(),
+        error: "Wait for the current analysis or build to finish before changing AI settings.",
+      };
+    }
+    const result = aiSettings.save(input);
+    if (!result.ok) return result;
+    // Drop runtimes and conversations made with the old settings; the next
+    // analysis or build starts fresh with the new backend.
+    await describer.dispose();
+    await builder.resetRuntime();
+    await automationBuilder.resetRuntime();
+    emitAiSettings(result.status);
+    narration.refresh();
+    return result;
+  });
+  ipcMain.handle(IPC.testAiConnection, async (_event, input?: AiSettingsInput): Promise<AiConnectionResult> => {
+    const config = resolveAiConfig();
+    const proxyUrl = normalizeProxyUrl(typeof input?.proxyUrl === "string" ? input.proxyUrl : config.proxyUrl);
+    const typed = typeof input?.token === "string" ? input.token.trim() : "";
+    // The saved token only ever goes to the saved service URL.
+    if (!typed && config.proxyToken && proxyUrl !== config.proxyUrl) {
+      return { ok: false, error: "Paste your access token to test a different service URL." };
+    }
+    return testAwsConnection(proxyUrl, typed || config.proxyToken);
+  });
   ipcMain.handle(IPC.narrationStatus, () => narration.status());
   ipcMain.handle(IPC.narrationDownload, () => narration.downloadModel());
   ipcMain.handle(IPC.narrationTranscribe, (_event, sessionId: string) =>
@@ -275,7 +314,7 @@ export function registerIpc(
       await narration.ensureTranscribedForAnalysis(id);
       // On-device pre-send redaction (non-blocking): mask secrets/credentials/PII in
       // every outgoing text field — and, under Advanced protection, blur on-screen
-      // text in frames — before anything reaches GitHub Copilot. Analysis always
+      // text in frames — before anything reaches the AI backend. Analysis always
       // proceeds; the (raw-value-free) report is returned purely for a UI summary.
       const { redaction, report } = await buildRedaction(id);
       try {

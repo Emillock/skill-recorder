@@ -1,4 +1,4 @@
-// Eval harness: runs the multi-turn Copilot describer against each fixed
+// Eval harness: runs the multi-turn describer agent against each fixed
 // scenario and scores the resulting analysis against its rubric.
 //
 // For every scenario it: materializes a synthetic session (session.json +
@@ -12,7 +12,8 @@
 //   --only=slug,slug   run a subset of scenarios
 //   --judge            also run the optional semantic LLM judge
 //   --keep             print the temp sessions dir (artifacts kept for inspection)
-//   --model=<id>       override the describer model (else auto vision model)
+//   --model=<id>       override the describer model (else the backend's default)
+//   --provider=<p>     aws (default) or copilot; aws reads SKILL_RECORDER_PROXY_URL/TOKEN
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -42,6 +43,7 @@ function parseFlags(argv: string[]): Flags {
     else if (arg === "--judge") flags.judge = true;
     else if (arg === "--keep") flags.keep = true;
     else if (arg.startsWith("--model=")) flags.model = arg.slice(8);
+    else if (arg.startsWith("--provider=")) process.env.SKILL_RECORDER_PROVIDER = arg.slice(11);
   }
   return flags;
 }
@@ -153,7 +155,7 @@ async function main(): Promise<void> {
       }
       if (flags.judge) {
         try {
-          res.judge = await judgeAnalysis(scenario, analysis, flags.model);
+          res.judge = await judgeAnalysis(scenario, analysis);
         } catch (err) {
           console.error(`   judge failed: ${err instanceof Error ? err.message : String(err)}`);
         }

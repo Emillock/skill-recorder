@@ -1,0 +1,41 @@
+name: Proxy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "proxy/**"
+      - ".github/workflows/proxy.yml"
+  pull_request:
+    paths:
+      - "proxy/**"
+      - ".github/workflows/proxy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: proxy
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: proxy/package-lock.json
+
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Lint the SAM template
+        run: pipx run --spec cfn-lint==1.58.0 cfn-lint template.yaml

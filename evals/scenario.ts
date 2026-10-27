@@ -3,7 +3,7 @@
 // A scenario is a fixed, synthetic recording (a list of captured OS events) plus
 // a rubric describing what a good analysis of it looks like. Fixtures are
 // deterministic and video-less on purpose: they isolate the part of the system
-// with real variance — the multi-turn Copilot describer — from flaky live
+// with real variance — the multi-turn describer agent — from flaky live
 // capture, so the eval is repeatable. The events are authored to mirror what the
 // real collectors would emit for the same task (see evals/mocks/*.html for the
 // pages these flows reference).

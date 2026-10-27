@@ -1,13 +1,11 @@
-import { CopilotClient, type CopilotSession } from "@github/copilot-sdk";
-
-import { COPILOT_SIGNED_OUT_ERROR } from "../../common/ipc";
-import { copilotConnectionOption, withStartupTimeout } from "../copilot-cli-path";
 import { createLogger } from "../logger";
+import { RuntimeHolder } from "../llm/runtime";
+import type { AgentRuntime, AgentSession } from "../llm/types";
 
 /**
- * Shared plumbing for the final-stage, multi-turn Copilot builders (Skill Builder
- * and Automation Builder). Owns one lazily-started {@link CopilotClient} and a small
- * pool of live conversations — one per recording — so each build's plan → refine →
+ * Shared plumbing for the final-stage, multi-turn builders (Skill Builder and
+ * Automation Builder). Owns one lazily-started model runtime and a small pool of
+ * live conversations — one per recording — so each build's plan → refine →
  * create flow stays in a single session. Subclasses add the build-specific tools,
  * system prompt, and `build`/`create` turns; everything below is common.
  */
@@ -15,31 +13,35 @@ import { createLogger } from "../logger";
 /** The minimum every live build carries so the pool can manage it. */
 export interface BaseLive {
   sessionId: string;
-  copilot: CopilotSession;
+  agent: AgentSession;
 }
 
 const MAX_LIVE_SESSIONS = 4;
 
 export abstract class AgentBuilder<TLive extends BaseLive> {
-  private client: CopilotClient | null = null;
-  private clientStart: Promise<CopilotClient> | null = null;
-  protected model: string | undefined;
+  private readonly runtime: RuntimeHolder;
   protected readonly live = new Map<string, TLive>();
   protected readonly active = new Set<string>();
   protected readonly log;
 
-  /** @param name Used for logs and the "not signed in" / startup-timeout messages. */
-  constructor(private readonly name: string) {
+  /** @param name Used for logs and the startup-timeout messages. */
+  constructor(name: string) {
     this.log = createLogger(name);
+    this.runtime = new RuntimeHolder(name);
   }
 
   isBuilding(sessionId: string): boolean {
     return this.active.has(sessionId);
   }
 
+  /** True while any build step is running. */
+  isBusy(): boolean {
+    return this.active.size > 0;
+  }
+
   async cancel(sessionId: string): Promise<void> {
     const live = this.live.get(sessionId);
-    if (live) await live.copilot.abort().catch(() => undefined);
+    if (live) await live.agent.abort().catch(() => undefined);
   }
 
   async forget(sessionId: string): Promise<void> {
@@ -50,40 +52,24 @@ export abstract class AgentBuilder<TLive extends BaseLive> {
     for (const [id, live] of this.live) {
       if (this.active.has(id)) continue;
       this.live.delete(id);
-      await live.copilot.disconnect().catch(() => undefined);
+      await live.agent.disconnect().catch(() => undefined);
     }
+  }
+
+  /** Drop every conversation and the runtime so the next build uses the current
+   *  AI settings. Prepared skill previews are plain files and stay valid. */
+  async resetRuntime(): Promise<void> {
+    for (const [id] of this.live) await this.disposeLive(id);
+    await this.runtime.stop();
   }
 
   async dispose(): Promise<void> {
-    for (const [id] of this.live) await this.disposeLive(id);
-    if (this.client) await this.client.stop().catch(() => undefined);
-    this.client = null;
-    this.clientStart = null;
+    await this.resetRuntime();
   }
 
-  /** Start (once) and return the shared Copilot client, verifying it's signed in. */
-  protected async ensureClient(): Promise<CopilotClient> {
-    if (this.client) return this.client;
-    if (this.clientStart) return this.clientStart;
-    this.clientStart = (async () => {
-      const client = new CopilotClient(copilotConnectionOption());
-      await withStartupTimeout(client.start(), `Copilot CLI (${this.name})`);
-      const auth = await client.getAuthStatus();
-      if (!auth.isAuthenticated) {
-        await client.stop().catch(() => undefined);
-        throw new Error(COPILOT_SIGNED_OUT_ERROR);
-      }
-      this.model = process.env.SKILL_RECORDER_MODEL || undefined;
-      this.log.info("Copilot ready", auth.login ? `as ${auth.login}` : "");
-      this.client = client;
-      return client;
-    })();
-    try {
-      return await this.clientStart;
-    } catch (err) {
-      this.clientStart = null;
-      throw err;
-    }
+  /** Start (once) and return the shared runtime, verifying the backend is ready. */
+  protected async ensureRuntime(): Promise<AgentRuntime> {
+    return this.runtime.get();
   }
 
   /** Add a freshly created live session to the pool, evicting the oldest idle one
@@ -94,7 +80,7 @@ export abstract class AgentBuilder<TLive extends BaseLive> {
       if (this.live.size <= MAX_LIVE_SESSIONS) break;
       if (id === live.sessionId || this.active.has(id)) continue;
       this.live.delete(id);
-      void l.copilot.disconnect().catch(() => undefined);
+      void l.agent.disconnect().catch(() => undefined);
     }
   }
 
@@ -102,6 +88,6 @@ export abstract class AgentBuilder<TLive extends BaseLive> {
     const live = this.live.get(sessionId);
     if (!live) return;
     this.live.delete(sessionId);
-    await live.copilot.disconnect().catch(() => undefined);
+    await live.agent.disconnect().catch(() => undefined);
   }
 }

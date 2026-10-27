@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Skill Recorder service on AWS. Forwards the desktop app's model requests to
+  Claude in Amazon Bedrock and its speech-to-text requests to a SageMaker
+  endpoint, using per-user access tokens. Build with `npm ci && npm run build`
+  before `sam deploy`.
+
+Parameters:
+  AllowedModels:
+    Type: String
+    Default: claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5
+    Description: Comma-separated Claude model IDs users may request. The first is the default.
+  FallbackModel:
+    Type: String
+    Default: claude-opus-4-8
+    Description: Model a refused request is retried on. Leave empty to disable the retry.
+  BedrockRegion:
+    Type: String
+    Default: ""
+    Description: Region of the Claude in Amazon Bedrock endpoint. Empty uses this stack's region.
+  MaxOutputTokens:
+    Type: Number
+    Default: 64000
+    MinValue: 1024
+    Description: Ceiling on max_tokens for every request.
+  AsrEndpointName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-zA-Z0-9](-*[a-zA-Z0-9])*$"
+    Description: SageMaker endpoint for speech-to-text. Leave empty to disable transcription.
+  AsrRequestFormat:
+    Type: String
+    Default: json
+    AllowedValues: [json, wav]
+    Description: How audio is sent to the endpoint (see sagemaker/README.md).
+  ImageRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: Days uploaded screen frames are kept before S3 deletes them.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+  ReservedConcurrency:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    Description: Most requests served at once; a ceiling on cost and on load sent to Bedrock.
+
+Conditions:
+  HasAsr: !Not [!Equals [!Ref AsrEndpointName, ""]]
+  HasBedrockRegion: !Not [!Equals [!Ref BedrockRegion, ""]]
+
+Resources:
+  TokensTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tokenHash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tokenHash
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  ImagesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireFrames
+            Status: Enabled
+            ExpirationInDays: !Ref ImageRetentionDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  ImagesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImagesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ImagesBucket.Arn
+              - !Sub "${ImagesBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  ProxyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-proxy
+      RetentionInDays: !Ref LogRetentionDays
+
+  ProxyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-proxy
+      Description: Skill Recorder service (Bedrock and SageMaker proxy)
+      CodeUri: dist/
+      Handler: index.handler
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 1024
+      # Long Claude turns stream for minutes; 15 minutes is the Lambda maximum.
+      Timeout: 900
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      LoggingConfig:
+        LogGroup: !Ref ProxyLogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          TOKENS_TABLE: !Ref TokensTable
+          IMAGES_BUCKET: !Ref ImagesBucket
+          BEDROCK_REGION: !If [HasBedrockRegion, !Ref BedrockRegion, !Ref AWS::Region]
+          ALLOWED_MODELS: !Ref AllowedModels
+          FALLBACK_MODEL: !Ref FallbackModel
+          MAX_OUTPUT_TOKENS: !Ref MaxOutputTokens
+          ASR_ENDPOINT_NAME: !Ref AsrEndpointName
+          ASR_REQUEST_FORMAT: !Ref AsrRequestFormat
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TokensTable
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: FrameStorage
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub "${ImagesBucket.Arn}/images/*"
+            # Scope Resource to your allowed model ARNs once you know them.
+            - Sid: ClaudeInBedrock
+              Effect: Allow
+              Action: bedrock-mantle:CreateInference
+              Resource: "*"
+            - !If
+              - HasAsr
+              - Sid: SpeechToText
+                Effect: Allow
+                Action: sagemaker:InvokeEndpoint
+                Resource: !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/${AsrEndpointName}"
+              - !Ref AWS::NoValue
+
+  # The desktop app streams responses, which needs a function URL in
+  # RESPONSE_STREAM mode (API Gateway's 29-second default integration timeout
+  # would cut long model turns). Access is checked by the function's own
+  # per-user tokens, so the URL itself is public.
+  ProxyFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref ProxyFunction
+      AuthType: NONE
+      InvokeMode: RESPONSE_STREAM
+
+  ProxyFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProxyFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  ProxyFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProxyFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  ServiceUrl:
+    Description: Enter this in Skill Recorder's AI settings.
+    Value: !GetAtt ProxyFunctionUrl.FunctionUrl
+  TokensTableName:
+    Description: Pass to scripts/tokens.mjs with --table.
+    Value: !Ref TokensTable
+  ImagesBucketName:
+    Value: !Ref ImagesBucket

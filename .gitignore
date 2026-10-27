@@ -12,3 +12,7 @@ release
 evals/results/
 # Opt-in OCR eval's downloaded traineddata cache
 evals/.cache/
+
+# AWS SAM build output for the proxy service
+proxy/.aws-sam/
+__pycache__/

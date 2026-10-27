@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { SensitiveModelStatus } from "../common/ipc";
+import { aiDestination, useActiveAiProvider } from "./ai-backend";
 
 /** Human-readable status for the on-device protection model shown in the sheet. */
 function protectionModelNote(status: SensitiveModelStatus | null): string {
@@ -44,6 +45,7 @@ export function WhatsRecorded({
   onDownload: () => void;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const provider = useActiveAiProvider();
 
   useEffect(() => {
     sheetRef.current?.focus({ preventScroll: true });
@@ -149,11 +151,19 @@ export function WhatsRecorded({
               on again, or switching inputs, starts a new segment linked to the same recording
               timeline.
             </li>
-            <li>
-              The recording can be turned into text on this computer using an on-device model. The
-              transcript stays in the language you select from Whisper's 99 supported choices. The
-              first transcription needs a one-time ~252 MB download that you choose when to start.
-            </li>
+            {provider === "aws" ? (
+              <li>
+                When you analyze, the recorded audio is sent to your organization&apos;s Skill
+                Recorder service on AWS and turned into text there. The transcript stays in the
+                language you select from Whisper&apos;s 99 supported choices.
+              </li>
+            ) : (
+              <li>
+                The recording can be turned into text on this computer using an on-device model. The
+                transcript stays in the language you select from Whisper's 99 supported choices. The
+                first transcription needs a one-time ~252 MB download that you choose when to start.
+              </li>
+            )}
             <li>Leave Narrate and the recording-bar microphone off and no microphone is opened.</li>
           </ul>
         </section>
@@ -174,7 +184,9 @@ export function WhatsRecorded({
               When you choose Analyze, the event timeline (window and document titles, URLs, and
               clipboard previews and recorded-terminal commands), plus screen images, narration
               text, and only the bounded terminal-output excerpts needed for analysis, are sent
-              to GitHub&apos;s cloud service and processed by GitHub Copilot.
+              to {aiDestination(provider)}.
+              {provider === "aws" &&
+                " Screen images the model looks at are kept there briefly, and recorded voice is sent as audio to be transcribed."}
             </li>
             <li>
               By default, before anything is sent, this computer hides sensitive details like

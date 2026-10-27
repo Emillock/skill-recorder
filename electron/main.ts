@@ -7,6 +7,7 @@ import {
   Menu,
   screen,
 } from "electron";
+import path from "node:path";
 
 import { FULL_CAPTURE } from "../common/config";
 import { IPC, type RecorderStatus, type StartResult } from "../common/ipc";
@@ -21,6 +22,9 @@ import { Describer } from "./describer/describer";
 import { processSession } from "./pipeline";
 import { registerIpc } from "./ipc";
 import { createLogger } from "./logger";
+import { setStoredAiConfigSource } from "./llm/config";
+import { safeStorageCipher } from "./llm/safe-storage-cipher";
+import { AI_SETTINGS_FILE, AiSettingsStore } from "./llm/settings-store";
 import { NarrationManager } from "./narration/manager";
 import { SensitiveModelManager } from "./sensitive/model-manager";
 import { RecorderController } from "./recorder/controller";
@@ -359,6 +363,12 @@ app.whenReady().then(async () => {
   if (process.platform === "win32") Menu.setApplicationMenu(null);
   if (dock && app.dock) app.dock.setIcon(dock);
 
+  const aiSettings = new AiSettingsStore(
+    path.join(app.getPath("userData"), AI_SETTINGS_FILE),
+    safeStorageCipher,
+  );
+  aiSettings.load();
+  setStoredAiConfigSource(() => aiSettings.stored());
   narration.initialize();
   try {
     await microphones.initialize();
@@ -385,6 +395,8 @@ app.whenReady().then(async () => {
     microphones,
     screens,
     sensitiveModels,
+    aiSettings,
+    (status) => broadcast(IPC.aiSettingsChanged, status),
     () => recordingStartPending,
     (sender) => {
       const controls = recordingControlsWindow;

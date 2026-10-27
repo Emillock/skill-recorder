@@ -16,6 +16,8 @@ import {
   narrationLanguageLabel,
   type NarrationLanguage,
 } from "../common/narration";
+import { aiBackendName } from "./ai-backend";
+import { AiSettingsSheet } from "./AiSettings";
 import { formatMs } from "./format";
 import { RecordingPrivacyWarning } from "./RecordingPrivacyWarning";
 import { WhatsRecorded } from "./WhatsRecorded";
@@ -56,6 +58,7 @@ export function Recorder() {
   const [privacyReviewOrigin, setPrivacyReviewOrigin] =
     useState<PrivacyReviewOrigin | null>(null);
   const [showRecordingWarning, setShowRecordingWarning] = useState(false);
+  const [showAiSettings, setShowAiSettings] = useState(false);
   const [warningStarting, setWarningStarting] = useState(false);
   const [showNarrationSettings, setShowNarrationSettings] = useState(false);
   const [narrationLanguage, setSelectedNarrationLanguage] =
@@ -92,6 +95,9 @@ export function Recorder() {
     void window.skillRecorder.sensitiveModelStatus().then(setSensitive);
     void refreshCount();
     const offRecorder = window.skillRecorder.onStatusChanged(applyRecorderStatus);
+    const offAiSettings = window.skillRecorder.onAiSettingsChanged(() => {
+      void window.skillRecorder.doctor().then(setDoctor);
+    });
     const offNarration = window.skillRecorder.onNarrationStatusChanged(setNarrationStatus);
     const offMicrophones =
       window.skillRecorder.onMicrophoneSettingsChanged(setMicrophoneSettings);
@@ -100,6 +106,7 @@ export function Recorder() {
     const offSensitive = window.skillRecorder.onSensitiveModelStatusChanged(setSensitive);
     return () => {
       offRecorder();
+      offAiSettings();
       offNarration();
       offMicrophones();
       offScreens();
@@ -688,9 +695,14 @@ export function Recorder() {
       {doctor && (
         <div className="doctor">
           <Row
-            label="GitHub Copilot"
-            status={doctor.copilotCli.ok ? "good" : "bad"}
-            note={doctor.copilotCli.ok ? "found" : "missing"}
+            label={aiBackendName(doctor.ai.provider)}
+            status={doctor.ai.configured ? "good" : "bad"}
+            note={
+              doctor.ai.provider === "copilot"
+                ? doctor.ai.configured ? "found" : "missing"
+                : doctor.ai.configured ? "set up" : "not set up"
+            }
+            action={{ label: "settings", disabled: recording, onClick: () => setShowAiSettings(true) }}
           />
           {narrate && narrationStatus && (
             <VoiceModelRow
@@ -719,6 +731,7 @@ export function Recorder() {
           onClose={() => setShowRecordingWarning(false)}
         />
       )}
+      {showAiSettings && <AiSettingsSheet onClose={() => setShowAiSettings(false)} />}
       {privacyReviewOrigin && (
         <WhatsRecorded
           onClose={closePrivacyReview}
@@ -776,6 +789,9 @@ function VoiceModelRow({
   }
   if (status.phase === "loading") {
     return <Row label="voice transcription" status="warn" note="preparing" />;
+  }
+  if (status.engine === "aws") {
+    return <Row label="voice transcription" status="good" note="on AWS · multilingual" />;
   }
   if (status.model === "ready") {
     return <Row label="voice transcription" status="good" note="on-device · multilingual" />;
