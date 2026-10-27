@@ -15,6 +15,7 @@
 //   --only=slug,slug   run a subset of scenarios
 //   --keep             print the temp sessions dir (artifacts kept for inspection)
 //   --model=<id>       override the builder model
+//   --provider=<p>     aws (default) or copilot; aws reads SKILL_RECORDER_PROXY_URL/TOKEN
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -38,6 +39,7 @@ function parseFlags(argv: string[]): Flags {
     if (arg.startsWith("--only=")) flags.only = new Set(arg.slice(7).split(",").map((s) => s.trim()).filter(Boolean));
     else if (arg === "--keep") flags.keep = true;
     else if (arg.startsWith("--model=")) flags.model = arg.slice(8);
+    else if (arg.startsWith("--provider=")) process.env.SKILL_RECORDER_PROVIDER = arg.slice(11);
   }
   return flags;
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { SensitiveFinding, SensitiveReport } from "../common/ipc";
 import { sourceLabel } from "../common/sensitive";
+import { aiBackendName, useActiveAiProvider } from "./ai-backend";
 
 const SEVERITY_LABEL: Record<SensitiveFinding["severity"], string> = {
   high: "High risk",
@@ -34,6 +35,7 @@ export function SensitiveReview({
   report: SensitiveReport;
   onDismiss: () => void;
 }) {
+  const provider = useActiveAiProvider();
   const [open, setOpen] = useState(false);
   const regions = report.images?.regionsBlurred ?? 0;
   const frames = report.images?.framesBlurred ?? 0;
@@ -125,7 +127,7 @@ export function SensitiveReview({
           </div>
 
           <p className="sensitive-caveat">
-            This ran on your computer and hid these before anything was sent to GitHub Copilot. It
+            This ran on your computer and hid these before anything was sent to {aiBackendName(provider)}. It
             covers secrets and personal details in the text that is sent (window titles, URLs,
             clipboard, terminal commands, notes, and voice) and in your screen images. It is on by
             default; you can turn it off in What&apos;s recorded.

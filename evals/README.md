@@ -1,7 +1,7 @@
 # Skill Recorder — Evals
 
 Repeatable evals for the part of the system with real variance: the multi-turn
-**Copilot describer** that turns captured signals into an *overall intent* + an
+**describer agent** that turns captured signals into an *overall intent* + an
 *ordered list of steps*. Each eval feeds the describer a fixed, synthetic
 recording and scores its analysis against a rubric.
 
@@ -25,9 +25,19 @@ npm run eval -- --only=web-to-spreadsheet
 npm run eval -- --judge            # also run the semantic LLM judge
 npm run eval -- --keep             # print the temp sessions dir (artifacts kept)
 npm run eval -- --model=<model-id> # override the describer model
+npm run eval -- --provider=copilot # run on GitHub Copilot instead of AWS
 ```
 
-Requires GitHub Copilot CLI to be signed in (same auth the app uses). Exit code
+Runs on the same AI backend the app uses, chosen with `--provider` (or
+`SKILL_RECORDER_PROVIDER`):
+
+- **`aws`** (default): Claude through the Skill Recorder service on AWS. Set
+  `SKILL_RECORDER_PROXY_URL` and `SKILL_RECORDER_PROXY_TOKEN` (see
+  [`proxy/README.md`](../proxy/README.md)).
+- **`copilot`**: the bundled GitHub Copilot CLI, which must be signed in.
+
+To compare backends before switching, run the same scenarios with each provider
+and compare the scores in `evals/results/`. Exit code
 is non-zero if any scenario fails. Full results are written to
 `evals/results/<timestamp>.json` (git-ignored).
 
@@ -68,7 +78,7 @@ For each scenario the harness:
 
 A forbidden-noise hit fails the scenario outright; otherwise pass = ≥80% of checks.
 
-`--judge` adds an optional second opinion: a separate Copilot agent grades
+`--judge` adds an optional second opinion: a separate agent on the same backend grades
 faithfulness 0–5 against the scenario's ground truth (`judge.ts`). Off by default
 to keep runs deterministic.
 

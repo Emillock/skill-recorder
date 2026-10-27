@@ -23,6 +23,7 @@ export async function transcribeNarration(
   durationMs: number,
   language: NarrationLanguage,
   pipe: AsrPipeline,
+  modelId: string = narrationModelId(),
 ): Promise<{ model: string; segments: NarrationSegment[] }> {
   const samples = await decodeAudioFile(audioPath);
   if (samples.length === 0) {
@@ -56,7 +57,7 @@ export async function transcribeNarration(
 
   segments.sort((a, b) => a.atMs - b.atMs);
   log.info(`transcribed ${raw.length} chunks -> ${segments.length} narration segments`);
-  return { model: narrationModelId(), segments };
+  return { model: modelId, segments };
 }
 
 /**

@@ -1,11 +1,13 @@
-// Optional semantic judge: asks a Copilot agent to rate how faithfully the
+// Optional semantic judge: asks an agent (on the configured AI backend) to rate how faithfully the
 // describer's analysis captures the scenario's ground-truth task. Off by default
 // (`--judge`); the deterministic rubric in scoring.ts is the primary signal. This
 // adds a qualitative, human-like second opinion for the overnight report.
 
-import { approveAll, CopilotClient, type Tool } from "@github/copilot-sdk";
+import os from "node:os";
 
 import type { Analysis } from "../common/analysis";
+import { createAgentRuntime } from "../electron/llm/runtime";
+import type { AgentTool } from "../electron/llm/types";
 import type { Scenario } from "./scenario";
 
 export interface JudgeResult {
@@ -39,16 +41,13 @@ function renderPrompt(scenario: Scenario, a: Analysis): string {
   ].join("\n");
 }
 
-export async function judgeAnalysis(
-  scenario: Scenario,
-  analysis: Analysis,
-  model?: string,
-): Promise<JudgeResult> {
-  const client = new CopilotClient();
-  await client.start();
+/** Uses the same backend and model override (SKILL_RECORDER_MODEL) as the run. */
+export async function judgeAnalysis(scenario: Scenario, analysis: Analysis): Promise<JudgeResult> {
+  const runtime = createAgentRuntime("Judge");
+  await runtime.start();
   try {
     const holder: { result: JudgeResult | undefined } = { result: undefined };
-    const submit: Tool = {
+    const submit: AgentTool = {
       name: "submit_judgement",
       description: "Submit your final faithfulness grade (0–5) for the produced analysis.",
       parameters: {
@@ -73,19 +72,16 @@ export async function judgeAnalysis(
       },
     };
 
-    const session = await client.createSession({
-      systemMessage: { mode: "append", content: JUDGE_INSTRUCTIONS },
+    const session = await runtime.createSession({
+      systemMessage: JUDGE_INSTRUCTIONS,
       tools: [submit],
-      onPermissionRequest: approveAll,
-      enableHostGitOperations: false,
-      infiniteSessions: { enabled: false },
-      ...(model ? { model } : {}),
+      workingDirectory: os.tmpdir(),
     });
     await session.sendAndWait(renderPrompt(scenario, analysis), 120_000);
     await session.disconnect().catch(() => undefined);
     if (!holder.result) throw new Error("judge did not submit a grade");
     return holder.result;
   } finally {
-    await client.stop().catch(() => undefined);
+    await runtime.stop().catch(() => undefined);
   }
 }

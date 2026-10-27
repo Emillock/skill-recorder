@@ -4,11 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 
-import { CopilotClient, CopilotSession, type SessionConfig } from "@github/copilot-sdk";
-
 import { AnalysisSchema } from "../../common/analysis";
 import type { SkillBuildProgress } from "../../common/ipc";
 import { renderSkillMarkdown, SkillPlanSchema, type SkillPlan } from "../../common/skill";
+import type { AgentRuntime, AgentSession, AgentSessionConfig } from "../llm/types";
 import { loadPersistedSkill, SkillBuilder } from "./builder";
 
 const sessionId = "preview-test";
@@ -41,32 +40,34 @@ function fixture(
   process.env.SKILL_RECORDER_SKILLS_DIR = skills;
   const progress: SkillBuildProgress[] = [];
   const counts = { turns: 0, sessions: 0, aborts: 0 };
-  const client = new CopilotClient();
-  t.mock.method(client, "createSession", async (config: SessionConfig) => {
-    counts.sessions++;
-    await options.beforeSession?.();
-    const session = new CopilotSession();
-    t.mock.method(session, "abort", async () => { counts.aborts++; });
-    t.mock.method(session, "disconnect", async () => undefined);
-    t.mock.method(session, "sendAndWait", async (input: string | { prompt: string }) => {
-      counts.turns++;
-      await options.beforeTurn?.();
-      const prompt = typeof input === "string" ? input : input.prompt;
-      const toolName = prompt.includes("Call submit_skill") ? "submit_skill" : "propose_plan";
-      const tool = config.tools?.find((candidate) => candidate.name === toolName);
-      assert.ok(tool);
-      assert.ok(tool.handler);
-      const payload = toolName === "submit_skill"
-        ? { name: "model-name", description: "Model description", allowedTools: ["Bash(gh issue *)"], body: "# Instructions\n\nList issues for {{repo}}.\n\n<script>text only</script>" }
-        : plan;
-      await tool.handler(payload, { sessionId, toolCallId: "test", toolName, arguments: payload });
-      return undefined;
-    });
-    return session;
-  });
+  const runtime: AgentRuntime = {
+    provider: "aws",
+    turnTimeoutMs: 1_000,
+    start: async () => ({}),
+    stop: async () => undefined,
+    createSession: async (config: AgentSessionConfig): Promise<AgentSession> => {
+      counts.sessions++;
+      await options.beforeSession?.();
+      return {
+        abort: async () => { counts.aborts++; },
+        disconnect: async () => undefined,
+        sendAndWait: async (prompt: string) => {
+          counts.turns++;
+          await options.beforeTurn?.();
+          const toolName = prompt.includes("Call submit_skill") ? "submit_skill" : "propose_plan";
+          const tool = config.tools.find((candidate) => candidate.name === toolName);
+          assert.ok(tool);
+          const payload = toolName === "submit_skill"
+            ? { name: "model-name", description: "Model description", allowedTools: ["Bash(gh issue *)"], body: "# Instructions\n\nList issues for {{repo}}.\n\n<script>text only</script>" }
+            : plan;
+          await tool.handler(payload);
+        },
+      };
+    },
+  };
   class TestBuilder extends SkillBuilder {
-    protected override async ensureClient(): Promise<CopilotClient> {
-      return client;
+    protected override async ensureRuntime(): Promise<AgentRuntime> {
+      return runtime;
     }
   }
   const builder = new TestBuilder((event) => progress.push(event));

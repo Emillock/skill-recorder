@@ -7,9 +7,11 @@ import {
   readAudioSources,
   type AudioSource,
 } from "../../common/audio";
-import type {
-  NarrationActionResult,
-  NarrationStatus,
+import {
+  AWS_PROXY_NOT_CONFIGURED_ERROR,
+  type NarrationActionResult,
+  type NarrationEngine,
+  type NarrationStatus,
 } from "../../common/ipc";
 import {
   DEFAULT_NARRATION_LANGUAGE,
@@ -19,9 +21,12 @@ import {
   type NarrationTranscript,
 } from "../../common/narration";
 import type { SessionMeta } from "../../common/types";
+import { resolveAiConfig } from "../llm/config";
+import { ProxyApi } from "../llm/proxy-api";
 import { createLogger } from "../logger";
 import { isValidSessionId, sessionDir } from "../recorder/session-store";
 import { shouldTranscribeBeforeAnalyze } from "./analyze-gate";
+import { createRemoteAsrPipeline } from "./remote-asr";
 import { transcribeNarration } from "./transcribe";
 import {
   getAsrPipeline,
@@ -32,6 +37,9 @@ import {
 } from "./whisper";
 
 const log = createLogger("Narration");
+
+/** Recorded in narration.json for transcripts made by the AWS service. */
+export const REMOTE_NARRATION_MODEL_ID = "aws-sagemaker";
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -96,6 +104,7 @@ async function removePartialDownloads(dir: string): Promise<void> {
 
 export class NarrationManager {
   private current: NarrationStatus = {
+    engine: "local",
     model: "missing",
     phase: "idle",
     progress: null,
@@ -121,8 +130,20 @@ export class NarrationManager {
     if (ready) void this.cleanupLegacyModel();
   }
 
+  /**
+   * With the AWS backend, speech-to-text runs on the organization's SageMaker
+   * endpoint, so there is no local model to download or load.
+   */
   status(): NarrationStatus {
-    return { ...this.current };
+    if (this.engine() === "aws") {
+      return { ...this.current, engine: "aws", model: "ready", progress: null, loadedBytes: null, totalBytes: null };
+    }
+    return { ...this.current, engine: "local" };
+  }
+
+  /** Re-announce the status after the AI backend changed. */
+  refresh(): void {
+    this.emitStatus(this.status());
   }
 
   isBusyWith(sessionId: string): boolean {
@@ -130,7 +151,7 @@ export class NarrationManager {
   }
 
   downloadModel(): Promise<NarrationActionResult> {
-    if (this.current.model === "ready") {
+    if (this.engine() === "aws" || this.current.model === "ready") {
       return Promise.resolve({ ok: true, outcome: "ready" });
     }
     if (this.downloadTask) return this.downloadTask;
@@ -198,6 +219,9 @@ export class NarrationManager {
   }
 
   async transcribeIfCached(dir: string): Promise<void> {
+    // Remote speech-to-text uploads the user's voice, so it waits until they
+    // choose Analyze or Transcribe instead of running when a recording stops.
+    if (this.engine() === "aws") return;
     if (!isNarrationModelCached()) return;
     const id = path.basename(dir);
     if (!isValidSessionId(id)) return;
@@ -219,6 +243,16 @@ export class NarrationManager {
       if (this.sessionTasks.get(sessionId) === task) this.sessionTasks.delete(sessionId);
     });
     return task;
+  }
+
+  private engine(): NarrationEngine {
+    return resolveAiConfig().provider === "aws" ? "aws" : "local";
+  }
+
+  private remotePipeline() {
+    const { proxyUrl, proxyToken } = resolveAiConfig();
+    if (!proxyUrl || !proxyToken) throw new Error(AWS_PROXY_NOT_CONFIGURED_ERROR);
+    return createRemoteAsrPipeline(new ProxyApi(proxyUrl, proxyToken));
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -272,7 +306,8 @@ export class NarrationManager {
       return { ok: false, error: "One or more saved narration segments are missing." };
     }
 
-    if (!allowDownload && !isNarrationModelCached()) {
+    const remote = this.engine() === "aws";
+    if (!remote && !allowDownload && !isNarrationModelCached()) {
       this.update({
         model: "missing",
         phase: "idle",
@@ -283,7 +318,7 @@ export class NarrationManager {
     }
 
     try {
-      const pipe = await this.loadModel(allowDownload, sessionId);
+      const pipe = remote ? this.remotePipeline() : await this.loadModel(allowDownload, sessionId);
       this.update({
         model: "ready",
         phase: "transcribing",
@@ -305,6 +340,7 @@ export class NarrationManager {
           source.durationMs,
           narrationLanguage,
           pipe,
+          remote ? REMOTE_NARRATION_MODEL_ID : undefined,
         );
         transcript.model ||= segmentTranscript.model;
         transcript.segments.push(...segmentTranscript.segments);

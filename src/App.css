@@ -3569,3 +3569,102 @@ button:focus-visible,
   color: var(--brand-ink);
   background: var(--signal-dim);
 }
+
+/* --- AI settings (where analysis runs) ------------------------------------ */
+.ai-settings-sheet {
+  max-width: 380px;
+}
+
+.ai-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.sheet-block-title {
+  margin-bottom: 2px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ai-provider label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.ai-provider label:has(input:checked) {
+  border-color: var(--signal);
+  background: var(--signal-dim);
+}
+
+.ai-provider input {
+  margin-top: 2px;
+  accent-color: var(--signal);
+}
+
+.ai-provider span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-provider strong {
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.ai-provider small {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.ai-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ai-fields label {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ai-remove-token {
+  align-self: flex-start;
+  font-size: 11.5px;
+}
+
+.ai-ok {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+
+.lib-ai-settings {
+  margin-left: auto;
+  padding: 3px 9px;
+  font-size: 11px;
+}

@@ -1,4 +1,4 @@
-import type { Tool } from "@github/copilot-sdk";
+import type { AgentTool } from "../llm/types";
 
 import {
   AutomationPlanSchema,
@@ -96,11 +96,11 @@ const stepsSchema = {
  * no separate submit tool. The plan is zod-validated; the architecture is injected
  * server-side.
  */
-export function createAutomationBuilderTools(ctx: AutomationToolContext): Tool[] {
+export function createAutomationBuilderTools(ctx: AutomationToolContext): AgentTool[] {
   const { architecture, onPlan } = ctx;
   const progress = (m: string) => ctx.onProgress?.(m);
 
-  const proposePlan: Tool = {
+  const proposePlan: AgentTool = {
     name: "propose_automation_plan",
     description:
       "Propose your reviewable plan for the automation: how you'll generalize the task, the trigger (propose a sensible default schedule), the fixed values it hard-codes (each referenced by a {{id}} token in the step prompts), and the generalized ordered prompt-steps. Call this once per turn, then STOP so the user can review or refine it (especially the schedule).",

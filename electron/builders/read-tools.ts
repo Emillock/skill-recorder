@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { Tool } from "@github/copilot-sdk";
+import type { AgentTool } from "../llm/types";
 
 import type { Analysis } from "../../common/analysis";
 import type { SessionBundle } from "../../common/bundle";
@@ -32,11 +32,11 @@ export interface ReadToolsContext {
 }
 
 /** Build the shared `get_analysis` + `get_timeline` tools for one builder session. */
-export function createReadTools(ctx: ReadToolsContext): Tool[] {
+export function createReadTools(ctx: ReadToolsContext): AgentTool[] {
   const { sessionDir, analysis } = ctx;
   const progress = (m: string) => ctx.onProgress?.(m);
 
-  const getAnalysis: Tool = {
+  const getAnalysis: AgentTool = {
     name: "get_analysis",
     description:
       "Return the approved analysis you are generalizing: the overall intent and the ordered list of steps (with each step's title, detail, apps, and evidence). Read this first.",
@@ -59,7 +59,7 @@ export function createReadTools(ctx: ReadToolsContext): Tool[] {
     },
   };
 
-  const getTimeline: Tool = {
+  const getTimeline: AgentTool = {
     name: "get_timeline",
     description:
       "Return the deterministic timeline behind the analysis: ordered steps with their app, window titles, hosts, URLs, terminal commands, clipboard counts and markers. Use it to ground your native-tool mapping in real evidence.",

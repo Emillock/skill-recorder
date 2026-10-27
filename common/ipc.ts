@@ -69,10 +69,13 @@ export interface SessionSummary {
 }
 
 export type NarrationModelState = "missing" | "downloading" | "ready" | "error";
+/** Where speech-to-text runs: the on-device Whisper model, or SageMaker via the AWS service. */
+export type NarrationEngine = "local" | "aws";
 export type NarrationPhase = "idle" | "loading" | "downloading" | "transcribing";
 
 /** Shared model/job state shown in the HUD and Sessions library. */
 export interface NarrationStatus {
+  engine: NarrationEngine;
   model: NarrationModelState;
   phase: NarrationPhase;
   progress: number | null;
@@ -123,7 +126,7 @@ export interface AnalyzeResult {
   error?: string;
   /**
    * Present when the on-device pre-send scan redacted potentially sensitive
-   * details before the session was sent to GitHub Copilot — masked values in the
+   * details before the session was sent to the AI backend — masked values in the
    * captured text, plus a count of on-screen regions blurred in frames. This is
    * purely informational — the analysis still ran and `ok` is unaffected. The
    * report carries only masked values + short redacted context, never raw values,
@@ -412,6 +415,67 @@ export function isCopilotSignedOutError(error?: string | null): boolean {
   return typeof error === "string" && error.includes("isn't signed in on this computer");
 }
 
+/** Shared tail of every AWS setup error; the renderer matches it to offer AI settings. */
+const OPEN_AI_SETTINGS = "Open AI settings";
+
+/** Thrown when the AWS backend is selected but has no service URL or access token. */
+export const AWS_PROXY_NOT_CONFIGURED_ERROR =
+  `The Skill Recorder service on AWS isn't set up on this computer yet. ${OPEN_AI_SETTINGS}, enter the service URL and your access token, then try again.`;
+
+/** Thrown when the Skill Recorder service on AWS rejects the saved access token. */
+export const AWS_PROXY_TOKEN_REJECTED_ERROR =
+  `The Skill Recorder service on AWS rejected your access token. ${OPEN_AI_SETTINGS}, enter a valid token, then try again.`;
+
+/** Whether an error means the AWS backend needs the user to fix their AI settings. */
+export function isAiSettingsError(error?: string | null): boolean {
+  return typeof error === "string" && error.includes(OPEN_AI_SETTINGS);
+}
+
+export type AiProvider = "aws" | "copilot";
+
+/** AI backend settings as shown in the app. The token itself never leaves the main process. */
+export interface AiSettingsStatus {
+  /** The saved choice. */
+  provider: AiProvider;
+  /** What analyses use now: the saved choice unless SKILL_RECORDER_PROVIDER overrides it. */
+  activeProvider: AiProvider;
+  proxyUrl: string;
+  /** Claude model ID; empty means the default. */
+  model: string;
+  defaultModel: string;
+  /** A token is saved (or supplied by the environment). */
+  hasToken: boolean;
+  /** Tokens can be encrypted with the OS keychain on this computer. */
+  secureStorage: boolean;
+  /** Environment variables overriding the saved values, e.g. for development. */
+  envOverrides: string[];
+}
+
+export interface AiSettingsInput {
+  provider: AiProvider;
+  proxyUrl: string;
+  model: string;
+  /** New token to save; omit to keep the saved one, empty string to remove it. */
+  token?: string;
+}
+
+export interface AiSettingsResult {
+  ok: boolean;
+  status: AiSettingsStatus;
+  error?: string;
+}
+
+export interface AiConnectionResult {
+  ok: boolean;
+  /** The proxy user the token belongs to. */
+  user?: string;
+  allowedModels?: string[];
+  defaultModel?: string;
+  /** The service has a speech-to-text endpoint configured. */
+  transcription?: boolean;
+  error?: string;
+}
+
 /** Which foreground-window provider is available on this platform. */
 export interface ActiveWindowInfo {
   ok: boolean;
@@ -438,8 +502,16 @@ export interface DoctorSource {
   note?: string;
 }
 
+/** Whether the selected AI backend is ready to use. */
+export interface AiBackendInfo {
+  provider: AiProvider;
+  /** Copilot: the CLI was found. AWS: a service URL and access token are set. */
+  configured: boolean;
+}
+
 export interface DoctorReport {
   platform: NodeJS.Platform;
+  ai: AiBackendInfo;
   copilotCli: CopilotInfo;
   activeWindow: ActiveWindowInfo;
   browserUrl: BrowserUrlInfo;
@@ -467,6 +539,10 @@ export const IPC = {
   doctor: "doctor:check",
   copilotSignIn: "copilot:sign-in",
   copilotSignInCancel: "copilot:sign-in-cancel",
+  aiSettings: "ai:settings",
+  saveAiSettings: "ai:save-settings",
+  testAiConnection: "ai:test-connection",
+  aiSettingsChanged: "ai:settings-changed",
   statusChanged: "recorder:status-changed",
   recordingPrivacyReviewed: "recorder:privacy-reviewed",
   recordingPrivacyWarningRequested: "recorder:privacy-warning-requested",
@@ -551,6 +627,16 @@ export interface SkillRecorderApi {
    */
   copilotSignIn(attemptId: string): Promise<CopilotSignInResult>;
   cancelCopilotSignIn(attemptId: string): Promise<void>;
+  /** Which AI backend analyses and builds use, and how it is configured. */
+  aiSettings(): Promise<AiSettingsStatus>;
+  /** Save AI backend settings; refused while an analysis or build is running. */
+  saveAiSettings(input: AiSettingsInput): Promise<AiSettingsResult>;
+  /**
+   * Check the Skill Recorder service on AWS with these settings (or the saved
+   * ones). An omitted token means "use the saved token".
+   */
+  testAiConnection(input?: AiSettingsInput): Promise<AiConnectionResult>;
+  onAiSettingsChanged(cb: (status: AiSettingsStatus) => void): () => void;
   onStatusChanged(cb: (status: RecorderStatus) => void): () => void;
   openTerminal(): Promise<TerminalActionResult>;
   terminalReady(): Promise<TerminalActionResult>;
@@ -582,7 +668,7 @@ export interface SkillRecorderApi {
    *  panel rehydrate when an already-analyzed session is reopened (the live `review`
    *  from {@link analyze} is transient). Contains only masked values + counts. */
   getSensitiveReport(sessionId: string): Promise<SensitiveReport | null>;
-  /** Run the Copilot describer on a session (defaults to the last completed one).
+  /** Run the describer agent on a session (defaults to the last completed one).
    *  Runs an on-device sensitive-detail scan first and redacts any flagged values
    *  from the text before it is sent — non-blocking; the analysis always proceeds
    *  and any redaction is reported back in `review`. */

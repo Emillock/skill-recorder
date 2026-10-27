@@ -12,6 +12,7 @@ import type {
 } from "../common/ipc";
 import { browserUrlProviderKind } from "./collectors/url-provider";
 import { resolveCopilotCliPath } from "./copilot-cli-path";
+import { resolveAiConfig } from "./llm/config";
 import { sessionsRoot } from "./recorder/session-store";
 
 const require = createRequire(import.meta.url);
@@ -77,9 +78,15 @@ export function runDoctor(): DoctorReport {
     return { key: s.key, label: s.label, tier: s.tier, cost: s.cost, supported: support.supported, note: support.note };
   });
 
+  const copilotCli = checkCopilot();
+  const ai = resolveAiConfig();
   return {
     platform: process.platform,
-    copilotCli: checkCopilot(),
+    ai: {
+      provider: ai.provider,
+      configured: ai.provider === "copilot" ? copilotCli.ok : Boolean(ai.proxyUrl && ai.proxyToken),
+    },
+    copilotCli,
     activeWindow: checkActiveWindow(),
     browserUrl,
     sessionsDir: sessionsRoot(),
